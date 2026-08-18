@@ -1280,16 +1280,6 @@ function buildCityMap(){
   // 광역자치단체 경계선
   for(const r of rs) body += `<path class="rout${r.id===selR?' on':''}" d="${pathOf(r)}"/>`;
 
-  // 명소가 있는 시·군 표시
-  for(const key of Object.keys(SPOTS)){
-    const i = key.indexOf('/'), rid = key.slice(0,i), cn = key.slice(i+1);
-    const c = cellOf(rid, cn); if(!c) continue;
-    body += `<g class="spotmark" data-r="${rid}" data-n="${esc(cn)}">
-      <circle cx="${c.p[0]}" cy="${c.p[1]}" r="${(6*k).toFixed(2)}" fill="#fff" stroke="#c9992a" stroke-width="${(2*k).toFixed(2)}"></circle>
-      <circle cx="${c.p[0]}" cy="${c.p[1]}" r="${(2.4*k).toFixed(2)}" fill="#c9992a"></circle>
-      <title>${esc(cn)} · ${esc(SPOTS[key].name)}</title></g>`;
-  }
-
   // 확대했을 때: 그 지역 안의 시·군 이름
   if(zoomed){
     for(const c of (CS[zoomRegion]||[])){
@@ -1323,6 +1313,20 @@ function buildCityMap(){
     if(cell && !cell.core)
       body += `<circle class="citydot" cx="${at[0]}" cy="${at[1]}" r="${(4.5*k).toFixed(2)}"></circle>`;
     body += `<text class="citylab" x="${(at[0]+(right?11*k:-11*k)).toFixed(1)}" y="${(at[1]+4.5*k).toFixed(1)}" text-anchor="${right?'start':'end'}">${esc(selectedCity.n)}</text>`;
+  }
+
+  // 명소 표시 — 이름표에 가리지 않도록 맨 위에, 확대 중에는 이름표 위쪽에 핀으로
+  for(const key of Object.keys(SPOTS)){
+    const i = key.indexOf('/'), rid = key.slice(0,i), cn = key.slice(i+1);
+    const c = cellOf(rid, cn); if(!c) continue;
+    const x = c.p[0];
+    const y = zoomed ? c.p[1] - 17*k : c.p[1];
+    const r1 = (zoomed ? 8 : 6.5)*k, r2 = 3.2*k, sw = 2.4*k;
+    body += `<g class="spotmark" data-r="${rid}" data-n="${esc(cn)}">`;
+    if(zoomed) body += `<path d="M ${(x-5.4*k).toFixed(1)} ${(y+4.4*k).toFixed(1)} L ${(x+5.4*k).toFixed(1)} ${(y+4.4*k).toFixed(1)} L ${x.toFixed(1)} ${(y+13*k).toFixed(1)} Z" fill="#c9992a"></path>`;
+    body += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r1.toFixed(2)}" fill="#fff" stroke="#c9992a" stroke-width="${sw.toFixed(2)}"></circle>
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r2.toFixed(2)}" fill="#c9992a"></circle>
+      <title>${esc(cn)} · ${esc(SPOTS[key].name)}</title></g>`;
   }
 
   const vb = mapView.map(v=>v.toFixed(1)).join(' ');
