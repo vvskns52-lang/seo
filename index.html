@@ -1921,8 +1921,23 @@ function fitBox(b, pad, minW){
   const cx=(x0+x1)/2, cy=(y0+y1)/2;
   return [cx-w/2, cy-h/2, w, h];
 }
+function selectedPoint(){
+  if(!selectedCity) return null;
+  const cell = cellOf(selectedCity.region.id, selectedCity.isRegion ? null : selectedCity.n);
+  return cell ? cell.p : selectedCity.region.pt;
+}
+/* 휠·끌기로 직접 맞춘 화면은 확대 배율을 그대로 두고,
+   고른 곳이 화면 밖에 있을 때만 그 자리로 옮겨 준다 */
+function userView(){
+  const [x,y,w,h] = mapView;
+  const at = selectedPoint();
+  if(!at) return mapView.slice();
+  const mx = w*0.06, my = h*0.06;
+  if(at[0]>x+mx && at[0]<x+w-mx && at[1]>y+my && at[1]<y+h-my) return mapView.slice();
+  return clampView([at[0]-w/2, at[1]-h/2, w, h]);
+}
 function targetView(){
-  if(freeZoom) return mapView.slice();
+  if(freeZoom) return userView();
   if(!zoomRegion) return FULLVIEW.slice();
   const r = regionById(zoomRegion);
   if(!r) return FULLVIEW.slice();
@@ -2052,8 +2067,8 @@ function pickCity(regionId, cityName){
   const r = regionById(regionId); if(!r) return;
   const s = cityName ? (r.subs||[]).find(x=>x.n===cityName) : null;
   selectedCity = s ? {...s, region:r} : {n:r.name, t:r.type, c:null, region:r, isRegion:true};
+  if(zoomRegion !== r.id) freeZoom = false;   // 다른 광역자치단체를 누르면 그 지역으로 확대
   zoomRegion = r.id;
-  freeZoom = false;
   renderCityList(); renderAnswer();
 }
 function resetZoom(){
