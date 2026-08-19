@@ -145,6 +145,8 @@
         paint-order:stroke;stroke:#fff;stroke-width:calc(2.8px * var(--k));stroke-linejoin:round;}
   .rlabel.far{fill:#9aa3ae;}
   .cseed{fill:#6b7280;pointer-events:none;}
+  #map2 svg{cursor:grab;touch-action:pan-y;}
+  #map2 svg.grabbing{cursor:grabbing;}
   #map2 svg.zoomed .rgroup:not(.focus){opacity:.34;}
   #map2 svg.zoomed .rout:not(.on){opacity:.45;}
   .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);padding:10px 16px 0;}
@@ -1908,6 +1910,7 @@ const AR = FULLVIEW[2]/FULLVIEW[3];
 let mapView = FULLVIEW.slice();
 let zoomRegion = null;
 let viewAnim = 0;
+let freeZoom = false;         // 마우스 휠·끌기로 사용자가 직접 맞춘 화면인지
 
 function regionBox(r){ return r.box.slice(); }
 function fitBox(b, pad, minW){
@@ -1919,6 +1922,7 @@ function fitBox(b, pad, minW){
   return [cx-w/2, cy-h/2, w, h];
 }
 function targetView(){
+  if(freeZoom) return mapView.slice();
   if(!zoomRegion) return FULLVIEW.slice();
   const r = regionById(zoomRegion);
   if(!r) return FULLVIEW.slice();
@@ -1931,7 +1935,9 @@ function targetView(){
 let viewSnap = 0;
 function applyView(){
   const svg = document.querySelector('#map2 svg');
-  if(svg) svg.setAttribute('viewBox', mapView.map(v=>v.toFixed(1)).join(' '));
+  if(!svg) return;
+  svg.setAttribute('viewBox', mapView.map(v=>v.toFixed(1)).join(' '));
+  svg.style.setProperty('--k', (mapView[2]/FULLVIEW[2]).toFixed(4));
 }
 function animateView(to){
   cancelAnimationFrame(viewAnim); clearTimeout(viewSnap);
@@ -1958,6 +1964,7 @@ function buildCityMap(){
   const tv = targetView();
   const k  = tv[2]/FULLVIEW[2];
   const zoomed = !!zoomRegion;
+  const detail = zoomed || k < 0.62;      // 시·군 이름을 보여 줄 만큼 확대된 상태
   const short = n => n.replace(/(시|군|구)$/,'');
 
   let body = '';
@@ -1983,11 +1990,16 @@ function buildCityMap(){
   // 광역자치단체 경계선
   for(const r of rs) body += `<path class="rout${r.id===selR?' on':''}" d="${pathOf(r)}"/>`;
 
-  // 확대했을 때: 그 지역 안의 시·군 이름
-  if(zoomed){
-    for(const c of (CS[zoomRegion]||[])){
-      if(!c.n || c.n===selN) continue;              // 선택한 곳은 큰 이름표로 따로
-      body += `<text class="clab" x="${c.p[0]}" y="${(c.p[1]+3.4*k).toFixed(1)}" text-anchor="middle">${esc(short(c.n))}</text>`;
+  // 확대했을 때: 화면에 들어온 시·군 이름
+  if(detail){
+    const inView = p => p[0]>tv[0] && p[0]<tv[0]+tv[2] && p[1]>tv[1] && p[1]<tv[1]+tv[3];
+    for(const r of rs){
+      if(zoomRegion && r.id!==zoomRegion) continue;
+      for(const c of (CS[r.id]||[])){
+        if(!c.n || (r.id===selR && c.n===selN)) continue;   // 선택한 곳은 큰 이름표로 따로
+        if(!zoomRegion && !inView(c.p)) continue;
+        body += `<text class="clab" x="${c.p[0]}" y="${(c.p[1]+3.4*k).toFixed(1)}" text-anchor="middle">${esc(short(c.n))}</text>`;
+      }
     }
   }
 
@@ -1997,7 +2009,7 @@ function buildCityMap(){
     const a = r.pt;
     // 확대 중에는 이웃 지역 이름만 (해당 지역 이름은 카드 머리말에 표시)
     if(zoomed && r.id===zoomRegion) continue;
-    if(zoomed && (a[0]<tv[0] || a[0]>tv[0]+tv[2] || a[1]<tv[1] || a[1]>tv[1]+tv[3])) continue;
+    if(detail && (a[0]<tv[0] || a[0]>tv[0]+tv[2] || a[1]<tv[1] || a[1]>tv[1]+tv[3])) continue;
     // 확대 중에는 지시선 없이 지역 한가운데에 이름을 놓는다
     const tx = a[0]+(zoomed?0:(L.dx||0)), ty = a[1]+(zoomed?0:(L.dy||0));
     if(L.leader && !zoomed){
@@ -2012,7 +2024,7 @@ function buildCityMap(){
   if(selectedCity){
     const cell = cellOf(selR, selN);
     const at = cell ? cell.p : (regionById(selR)||{pt:[0,0]}).pt;
-    const right = at[0] < (zoomed ? mapView[0]+mapView[2]*0.55 : FULLVIEW[0]+FULLVIEW[2]*0.6);
+    const right = at[0] < tv[0]+tv[2]*(zoomed?0.55:0.6);
     if(cell && !cell.core)
       body += `<circle class="citydot" cx="${at[0]}" cy="${at[1]}" r="${(4.5*k).toFixed(2)}"></circle>`;
     body += `<text class="citylab" x="${(at[0]+(right?11*k:-11*k)).toFixed(1)}" y="${(at[1]+4.5*k).toFixed(1)}" text-anchor="${right?'start':'end'}">${esc(selectedCity.n)}</text>`;
@@ -2023,10 +2035,10 @@ function buildCityMap(){
     const i = key.indexOf('/'), rid = key.slice(0,i), cn = key.slice(i+1);
     const c = cellOf(rid, cn); if(!c) continue;
     const x = c.p[0];
-    const y = zoomed ? c.p[1] - 17*k : c.p[1];
-    const r1 = (zoomed ? 8 : 6.5)*k, r2 = 3.2*k, sw = 2.4*k;
+    const y = detail ? c.p[1] - 17*k : c.p[1];
+    const r1 = (detail ? 8 : 6.5)*k, r2 = 3.2*k, sw = 2.4*k;
     body += `<g class="spotmark" data-r="${rid}" data-n="${esc(cn)}">`;
-    if(zoomed) body += `<path d="M ${(x-5.4*k).toFixed(1)} ${(y+4.4*k).toFixed(1)} L ${(x+5.4*k).toFixed(1)} ${(y+4.4*k).toFixed(1)} L ${x.toFixed(1)} ${(y+13*k).toFixed(1)} Z" fill="#c9992a"></path>`;
+    if(detail) body += `<path d="M ${(x-5.4*k).toFixed(1)} ${(y+4.4*k).toFixed(1)} L ${(x+5.4*k).toFixed(1)} ${(y+4.4*k).toFixed(1)} L ${x.toFixed(1)} ${(y+13*k).toFixed(1)} Z" fill="#c9992a"></path>`;
     body += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r1.toFixed(2)}" fill="#fff" stroke="#c9992a" stroke-width="${sw.toFixed(2)}"></circle>
       <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r2.toFixed(2)}" fill="#c9992a"></circle>
       <title>${esc(cn)} · ${esc(SPOTS[key].name)}</title></g>`;
@@ -2041,10 +2053,12 @@ function pickCity(regionId, cityName){
   const s = cityName ? (r.subs||[]).find(x=>x.n===cityName) : null;
   selectedCity = s ? {...s, region:r} : {n:r.name, t:r.type, c:null, region:r, isRegion:true};
   zoomRegion = r.id;
+  freeZoom = false;
   renderCityList(); renderAnswer();
 }
 function resetZoom(){
   zoomRegion = null;
+  freeZoom = false;
   renderAnswer();
 }
 
@@ -2087,15 +2101,25 @@ function renderAnswer(){
       <div class="subhead">같은 행정구역의 다른 ${esc(selectedCity.t)}</div>
       <div class="chips">${sameKind.length? sameKind.map(s=>`<span class="${typeChip(s.t)}">${esc(s.n)}</span>`).join('') : '<span class="chip">없음</span>'}</div>`;
   }
+  redrawCityMap();
+  animateView(targetView());
+  paintZoomUI();
+}
+
+function redrawCityMap(){
   $('#map2').innerHTML = buildCityMap();
   $('#map2').querySelectorAll('[data-r]').forEach(el=>{
-    el.addEventListener('click', ()=>pickCity(el.dataset.r, el.dataset.n));
+    el.addEventListener('click', ()=>{ if(dragMoved) return; pickCity(el.dataset.r, el.dataset.n); });
   });
-  animateView(targetView());
+}
+
+function paintZoomUI(){
   const zr = zoomRegion ? regionById(zoomRegion) : null;
-  $('#zoomOut').style.display = zr ? '' : 'none';
-  $('#mapHint').textContent = !zr ? '도 안이 시·군으로 나뉘어 있습니다. 눌러 보세요.'
-    : ((cells()[zr.id]||[]).length > 1 ? `${zr.name} 안에서의 위치입니다.` : `${zr.name}를 확대했습니다.`);
+  $('#zoomOut').style.display = (zr || freeZoom) ? '' : 'none';
+  $('#mapHint').textContent =
+      zr ? ((cells()[zr.id]||[]).length > 1 ? `${zr.name} 안에서의 위치입니다.` : `${zr.name}를 확대했습니다.`)
+    : freeZoom ? '마우스 휠로 확대 · 축소하고, 끌어서 옮길 수 있습니다.'
+    : '마우스 휠로 확대할 수 있습니다. 시·군을 눌러 보세요.';
 }
 
 /* ---------- 이벤트 ---------- */
@@ -2123,7 +2147,7 @@ $('#quizReset').onclick = ()=> startQuiz();
 
 $('#mergeToggle').onchange = (e)=>{
   merged = e.target.checked;
-  selected = null; selectedCity = null; cellCache = null; zoomRegion = null;
+  selected = null; selectedCity = null; cellCache = null; zoomRegion = null; freeZoom = false;
   if(filterRegion==='gwangju'||filterRegion==='jeonnam'||filterRegion==='jn_gj') filterRegion='전체';
   renderMap1(); renderInfo(null);
   renderFilters(); renderCityList(); renderAnswer();
@@ -2132,6 +2156,79 @@ $('#mergeToggle').onchange = (e)=>{
 };
 $('#citySearch').oninput = (e)=>{ query = e.target.value; renderCityList(); };
 $('#zoomOut').onclick = resetZoom;
+
+/* ---------- 마우스 휠 확대 · 끌어서 이동 ---------- */
+const ZOOM_MIN_W = FULLVIEW[2] * 0.05;           // 최대 20배까지 확대
+const PAN_PAD = 40;                              // 지도 밖으로 나갈 수 있는 여유
+function clampView(v){
+  const x0 = FULLVIEW[0]-PAN_PAD, x1 = FULLVIEW[0]+FULLVIEW[2]+PAN_PAD;
+  const y0 = FULLVIEW[1]-PAN_PAD, y1 = FULLVIEW[1]+FULLVIEW[3]+PAN_PAD;
+  let [x,y,w,h] = v;
+  x = (w >= x1-x0) ? (x0+x1)/2 - w/2 : Math.min(Math.max(x, x0), x1-w);
+  y = (h >= y1-y0) ? (y0+y1)/2 - h/2 : Math.min(Math.max(y, y0), y1-h);
+  return [x,y,w,h];
+}
+function userPoint(svg, cx, cy){
+  const m = svg.getScreenCTM(); if(!m) return null;
+  const p = svg.createSVGPoint(); p.x = cx; p.y = cy;
+  return p.matrixTransform(m.inverse());
+}
+let redrawTimer = 0;
+function scheduleRedraw(){                       // 점·핀 크기는 다시 그릴 때 맞춘다
+  clearTimeout(redrawTimer);
+  redrawTimer = setTimeout(redrawCityMap, 150);
+}
+function zoomAt(cx, cy, factor){                 // 커서가 가리키는 곳을 기준으로 확대
+  const svg = document.querySelector('#map2 svg'); if(!svg) return;
+  const p = userPoint(svg, cx, cy); if(!p) return;
+  const w = Math.min(Math.max(mapView[2]*factor, ZOOM_MIN_W), FULLVIEW[2]);
+  if(Math.abs(w-mapView[2]) < 1e-6) return;
+  cancelAnimationFrame(viewAnim); clearTimeout(viewSnap);
+  const s = w / mapView[2];
+  mapView = (w >= FULLVIEW[2]-0.5)                // 끝까지 축소하면 전체 지도로 딱 맞춘다
+    ? FULLVIEW.slice()
+    : clampView([p.x-(p.x-mapView[0])*s, p.y-(p.y-mapView[1])*s, w, mapView[3]*s]);
+  freeZoom = true;
+  applyView(); paintZoomUI(); scheduleRedraw();
+}
+$('#map2').addEventListener('wheel', (e)=>{
+  if(!document.querySelector('#map2 svg')) return;
+  e.preventDefault();
+  const d = e.deltaY * (e.deltaMode===1 ? 16 : e.deltaMode===2 ? 400 : 1);
+  zoomAt(e.clientX, e.clientY, Math.exp(Math.max(-0.8, Math.min(0.8, d*0.0016))));
+}, {passive:false});
+
+let drag = null, dragMoved = false;
+$('#map2').addEventListener('pointerdown', (e)=>{
+  const svg = document.querySelector('#map2 svg');
+  if(!svg || e.button!==0 || e.pointerType==='touch') return;
+  const box = svg.getBoundingClientRect(); if(!box.width) return;
+  cancelAnimationFrame(viewAnim); clearTimeout(viewSnap);
+  drag = {sx:e.clientX, sy:e.clientY, vx:mapView[0], vy:mapView[1], upp:mapView[2]/box.width};
+  dragMoved = false;
+  svg.classList.add('grabbing');
+  e.preventDefault();                            // 끄는 동안 글자가 선택되지 않도록
+});
+window.addEventListener('pointermove', (e)=>{
+  if(!drag) return;
+  const dx = e.clientX-drag.sx, dy = e.clientY-drag.sy;
+  if(!dragMoved){
+    if(Math.abs(dx)+Math.abs(dy) < 4) return;
+    dragMoved = true;
+  }
+  mapView = clampView([drag.vx-dx*drag.upp, drag.vy-dy*drag.upp, mapView[2], mapView[3]]);
+  freeZoom = true;
+  applyView();
+});
+function endDrag(){
+  if(!drag) return;
+  drag = null;
+  const svg = document.querySelector('#map2 svg');
+  if(svg) svg.classList.remove('grabbing');
+  if(dragMoved){ paintZoomUI(); scheduleRedraw(); setTimeout(()=>{ dragMoved = false; }, 0); }
+}
+window.addEventListener('pointerup', endDrag);
+window.addEventListener('pointercancel', endDrag);
 
 /* ---------- 초기화 ---------- */
 renderMap1(); renderInfo(null); renderFilters(); renderCityList(); renderAnswer();
